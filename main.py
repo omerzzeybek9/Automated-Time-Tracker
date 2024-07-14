@@ -4,8 +4,8 @@ import psutil
 import time
 import sqlite3
 import threading
-from PyQt5.QtWidgets import QApplication, QMainWindow, QMenu, QVBoxLayout, QLabel, QPushButton, QTextEdit, QTabWidget, QWidget, QAction, QSystemTrayIcon, QMessageBox
-from PyQt5.QtCore import Qt, QTimer, QSize
+from PyQt5.QtWidgets import QApplication, QMainWindow, QMenu, QVBoxLayout, QLabel, QPushButton, QTextEdit, QTabWidget, QWidget, QAction, QSystemTrayIcon, QMessageBox, QGridLayout, QHBoxLayout
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QIcon
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -71,25 +71,42 @@ class TimeTracker(QMainWindow):
 
     def initTrackingTab(self):
         layout = QVBoxLayout()
+        
         self.status_label = QLabel('Tracking stopped', self)
+        self.status_label.setStyleSheet("font-size: 16px; color: red;")
+        
         self.start_button = QPushButton('Start Tracking', self)
+        self.start_button.setStyleSheet("font-size: 14px; padding: 10px;")
         self.start_button.clicked.connect(self.start_tracking)
+        
         self.stop_button = QPushButton('Stop Tracking', self)
+        self.stop_button.setStyleSheet("font-size: 14px; padding: 10px;")
         self.stop_button.clicked.connect(self.stop_tracking)
+        
+        self.reset_button = QPushButton('Reset Database', self)
+        self.reset_button.setStyleSheet("font-size: 14px; padding: 10px;")
+        self.reset_button.clicked.connect(self.reset_database)
+        
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(self.start_button)
+        button_layout.addWidget(self.stop_button)
+        button_layout.addWidget(self.reset_button)
+        
         layout.addWidget(self.status_label)
-        layout.addWidget(self.start_button)
-        layout.addWidget(self.stop_button)
+        layout.addLayout(button_layout)
+        
         self.tracking_tab.setLayout(layout)
 
     def initLogsTab(self):
         layout = QVBoxLayout()
         self.logs_text = QTextEdit(self)
+        self.logs_text.setReadOnly(True)
         layout.addWidget(self.logs_text)
         self.logs_tab.setLayout(layout)
 
     def initGraphTab(self):
         layout = QVBoxLayout()
-        self.canvas = FigureCanvas(Figure(figsize=(8, 6)))
+        self.canvas = FigureCanvas(Figure(figsize=(10, 6)))  # Adjust figure size if needed
         layout.addWidget(self.canvas)
         self.graph_tab.setLayout(layout)
 
@@ -101,6 +118,14 @@ class TimeTracker(QMainWindow):
                           start_time TEXT,
                           end_time TEXT)''')
         self.db_conn.commit()
+
+    def reset_database(self):
+        cursor = self.db_conn.cursor()
+        cursor.execute('''DROP TABLE IF EXISTS time_log''')
+        self.db_conn.commit()
+        self.create_table()
+        self.update_logs_and_graph()
+        self.status_label.setText('Database reset')
 
     def track_time(self):
         while self.running:
@@ -138,6 +163,7 @@ class TimeTracker(QMainWindow):
         if not self.running:
             self.running = True
             self.status_label.setText('Tracking started')
+            self.status_label.setStyleSheet("color: green;")
             if self.tracker_thread is None or not self.tracker_thread.is_alive():
                 self.tracker_thread = threading.Thread(target=self.track_time)
                 self.tracker_thread.start()
@@ -145,6 +171,7 @@ class TimeTracker(QMainWindow):
     def stop_tracking(self):
         self.running = False
         self.status_label.setText('Tracking stopped')
+        self.status_label.setStyleSheet("color: red;")
 
     def update_logs_and_graph(self):
         self.update_logs()
@@ -160,9 +187,9 @@ class TimeTracker(QMainWindow):
             log_text += f"ID: {row[0]}, Application: {row[1]}, Start Time: {row[2]}, End Time: {row[3]}\n"
         self.logs_text.setPlainText(log_text)
 
-    def seconds_to_hours(self, seconds):
-        hours = seconds / 3600
-        return hours
+    def seconds_to_minutes(self, seconds):
+        minutes = seconds / 60
+        return minutes
 
     def update_graph(self):
         cursor = self.db_conn.cursor()
@@ -184,18 +211,29 @@ class TimeTracker(QMainWindow):
     
         apps = list(app_times.keys())
         times_seconds = list(app_times.values())
-        times_hours = [self.seconds_to_hours(seconds) for seconds in times_seconds]
+        times_minutes = [self.seconds_to_minutes(seconds) for seconds in times_seconds]
         
         self.canvas.figure.clear()
         ax = self.canvas.figure.add_subplot(111)
         
         colors = plt.cm.get_cmap('tab20')(range(len(apps)))
-        ax.bar(apps, times_hours, align='center', color=colors)
-        
+        bars = ax.bar(apps, times_minutes, align='center', color=colors)
+
         ax.set_xlabel('Applications')
-        ax.set_ylabel('Time Spent (hours)')
+        ax.set_ylabel('Time Spent (minutes)')
         ax.set_title('Time Spent on Applications')
         ax.grid(True)
+        
+        # Rotate x-axis labels for better readability
+        ax.set_xticks(range(len(apps)))
+        ax.set_xticklabels(apps, rotation=90, ha='right')
+        
+        # Adjust layout to prevent clipping of tick-labels
+        self.canvas.figure.tight_layout()
+        
+        # Adjust subplots for more space
+        self.canvas.figure.subplots_adjust(bottom=0.3)
+        
         self.canvas.draw()
 
     def createActions(self):
