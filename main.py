@@ -2,45 +2,98 @@ import sys
 import os
 import psutil
 import time
-from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel, QPushButton, QTextEdit
-import threading
 import sqlite3
+import threading
+from PyQt5.QtWidgets import QApplication, QMainWindow, QMenu, QVBoxLayout, QLabel, QPushButton, QTextEdit, QTabWidget, QWidget, QAction, QSystemTrayIcon, QMessageBox
+from PyQt5.QtCore import Qt, QTimer, QSize
+from PyQt5.QtGui import QIcon
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+import matplotlib.pyplot as plt
 
-class TimeTracker(QWidget):
+class TimeTracker(QMainWindow):
     def __init__(self):
-        super().__init__()  # Correct super call
-        print("Initializing UI...")
-        self.initUI()  # Initialize the user interface
-        self.running = True  # Flag to control the tracking loop
-        print("Connecting to database...")
-        db_path = os.path.join(os.getcwd(), "time_tracker.db")
-        print(f"Database will be created at: {db_path}")
-        self.db_conn = sqlite3.connect(db_path)  # Connect to the database
-        self.create_table()  # Ensure the table is created
-        print("Starting tracker thread...")
-        self.tracker_thread = threading.Thread(target=self.track_time)  # Create a thread for time tracking
-        self.tracker_thread.start()  # Start the tracking thread
+        super().__init__()
+        self.initUI()
+        self.running = False
+        self.db_path = os.path.join(os.getcwd(), "time_tracker.db")
+        self.db_conn = sqlite3.connect(self.db_path)
+        self.create_table()
+        self.tracker_thread = None
+
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_logs_and_graph)
+        self.timer.start(5000)  # Update every 5 seconds
+
+        self.tray_icon = QSystemTrayIcon(self)
+        self.tray_icon.setIcon(QIcon('icon.png'))
+        self.tray_icon.setVisible(True)
+        
+        tray_menu = QMenu()
+        show_action = QAction("Show", self)
+        quit_action = QAction("Quit", self)
+        tray_menu.addAction(show_action)
+        tray_menu.addAction(quit_action)
+        self.tray_icon.setContextMenu(tray_menu)
+        
+        show_action.triggered.connect(self.show)
+        quit_action.triggered.connect(self.close_application)
 
     def initUI(self):
-        # Set up user interface
-        self.setGeometry(300, 300, 400, 300)
+        self.setGeometry(300, 300, 800, 600)
         self.setWindowTitle('Time Tracker')
-        layout = QVBoxLayout()
-        self.status_label = QLabel('Tracking...', self)
-        self.stop_button = QPushButton('Stop Tracking', self)
-        self.stop_button.clicked.connect(self.stop_tracking)
-        self.view_logs_button = QPushButton('View Logs', self)
-        self.view_logs_button.clicked.connect(self.view_logs)
-        self.logs_text = QTextEdit(self)
-        layout.addWidget(self.status_label)
-        layout.addWidget(self.stop_button)
-        layout.addWidget(self.view_logs_button)
-        layout.addWidget(self.logs_text)
-        self.setLayout(layout)
+        self.setWindowIcon(QIcon('icon.png'))  # Set the window icon
+        
+        self.tabs = QTabWidget()
+        
+        self.tracking_tab = QWidget()
+        self.logs_tab = QWidget()
+        self.graph_tab = QWidget()
+        
+        self.tabs.addTab(self.tracking_tab, "Tracking")
+        self.tabs.addTab(self.logs_tab, "Logs")
+        self.tabs.addTab(self.graph_tab, "Graph")
+        
+        self.initTrackingTab()
+        self.initLogsTab()
+        self.initGraphTab()
+        
+        main_widget = QWidget()
+        main_layout = QVBoxLayout()
+        main_layout.addWidget(self.tabs)
+        main_widget.setLayout(main_layout)
+        self.setCentralWidget(main_widget)
+        
+        self.createActions()
+        self.createMenuBar()
+
         self.show()
 
+    def initTrackingTab(self):
+        layout = QVBoxLayout()
+        self.status_label = QLabel('Tracking stopped', self)
+        self.start_button = QPushButton('Start Tracking', self)
+        self.start_button.clicked.connect(self.start_tracking)
+        self.stop_button = QPushButton('Stop Tracking', self)
+        self.stop_button.clicked.connect(self.stop_tracking)
+        layout.addWidget(self.status_label)
+        layout.addWidget(self.start_button)
+        layout.addWidget(self.stop_button)
+        self.tracking_tab.setLayout(layout)
+
+    def initLogsTab(self):
+        layout = QVBoxLayout()
+        self.logs_text = QTextEdit(self)
+        layout.addWidget(self.logs_text)
+        self.logs_tab.setLayout(layout)
+
+    def initGraphTab(self):
+        layout = QVBoxLayout()
+        self.canvas = FigureCanvas(Figure(figsize=(8, 6)))
+        layout.addWidget(self.canvas)
+        self.graph_tab.setLayout(layout)
+
     def create_table(self):
-        # Create the database table if it doesn't exist
         cursor = self.db_conn.cursor()
         cursor.execute('''CREATE TABLE IF NOT EXISTS time_log (
                           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -48,21 +101,17 @@ class TimeTracker(QWidget):
                           start_time TEXT,
                           end_time TEXT)''')
         self.db_conn.commit()
-        print("Table created or already exists.")
 
     def track_time(self):
-        # Track the active window and log time
         while self.running:
             active_window = self.get_active_window()
             if active_window:
-                print(f"Active window: {active_window}")
                 start_time = time.strftime('%Y-%m-%d %H:%M:%S')
-                time.sleep(5)  # Check every 5 seconds
+                time.sleep(5)
                 end_time = time.strftime('%Y-%m-%d %H:%M:%S')
                 self.log_time(active_window, start_time, end_time)
 
     def get_active_window(self):
-        # Get the title of currently active window
         try:
             import ctypes
             user32 = ctypes.windll.user32
@@ -76,25 +125,32 @@ class TimeTracker(QWidget):
             return None
 
     def log_time(self, application, start_time, end_time):
-        # Log the time spent on the active application to the database
         try:
             with sqlite3.connect("time_tracker.db") as conn:
                 cursor = conn.cursor()
                 cursor.execute('''INSERT INTO time_log (application, start_time, end_time)
                                   VALUES (?, ?, ?)''', (application, start_time, end_time))
                 conn.commit()
-                print(f"Logged time for {application} from {start_time} to {end_time}")
         except Exception as e:
             print(f"Error logging time: {e}")
 
-    def stop_tracking(self):
-        # Stop time tracking
-        self.running = False
-        self.status_label.setText('Tracking Stopped')
-        self.db_conn.close()
+    def start_tracking(self):
+        if not self.running:
+            self.running = True
+            self.status_label.setText('Tracking started')
+            if self.tracker_thread is None or not self.tracker_thread.is_alive():
+                self.tracker_thread = threading.Thread(target=self.track_time)
+                self.tracker_thread.start()
 
-    def view_logs(self):
-        # Display the logs in the text area
+    def stop_tracking(self):
+        self.running = False
+        self.status_label.setText('Tracking stopped')
+
+    def update_logs_and_graph(self):
+        self.update_logs()
+        self.update_graph()
+
+    def update_logs(self):
         self.logs_text.clear()
         cursor = self.db_conn.cursor()
         cursor.execute("SELECT * FROM time_log")
@@ -104,8 +160,74 @@ class TimeTracker(QWidget):
             log_text += f"ID: {row[0]}, Application: {row[1]}, Start Time: {row[2]}, End Time: {row[3]}\n"
         self.logs_text.setPlainText(log_text)
 
+    def seconds_to_hours(self, seconds):
+        hours = seconds / 3600
+        return hours
+
+    def update_graph(self):
+        cursor = self.db_conn.cursor()
+        cursor.execute("SELECT application, start_time, end_time FROM time_log")
+        rows = cursor.fetchall()
+        
+        app_times = {}
+        
+        for row in rows:
+            app_name = row[0]
+            start_time = time.mktime(time.strptime(row[1], '%Y-%m-%d %H:%M:%S'))
+            end_time = time.mktime(time.strptime(row[2], '%Y-%m-%d %H:%M:%S'))
+            duration_seconds = end_time - start_time
+            
+            if app_name in app_times:
+                app_times[app_name] += duration_seconds
+            else:
+                app_times[app_name] = duration_seconds
+    
+        apps = list(app_times.keys())
+        times_seconds = list(app_times.values())
+        times_hours = [self.seconds_to_hours(seconds) for seconds in times_seconds]
+        
+        self.canvas.figure.clear()
+        ax = self.canvas.figure.add_subplot(111)
+        
+        colors = plt.cm.get_cmap('tab20')(range(len(apps)))
+        ax.bar(apps, times_hours, align='center', color=colors)
+        
+        ax.set_xlabel('Applications')
+        ax.set_ylabel('Time Spent (hours)')
+        ax.set_title('Time Spent on Applications')
+        ax.grid(True)
+        self.canvas.draw()
+
+    def createActions(self):
+        self.exitAct = QAction('Exit', self)
+        self.exitAct.setShortcut('Ctrl+Q')
+        self.exitAct.setStatusTip('Exit application')
+        self.exitAct.triggered.connect(self.close_application)
+
+    def createMenuBar(self):
+        menubar = self.menuBar()
+        fileMenu = menubar.addMenu('File')
+        fileMenu.addAction(self.exitAct)
+
+    def closeEvent(self, event):
+        reply = QMessageBox.question(self, 'Message',
+            "Are you sure you want to quit?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+
+        if reply == QMessageBox.Yes:
+            self.db_conn.close()
+            if os.path.exists(self.db_path):
+                os.remove(self.db_path)
+            event.accept()
+        else:
+            event.ignore()
+
+    def close_application(self):
+        self.db_conn.close()
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+        self.close()
+
 if __name__ == "__main__":
-    print("Starting application...")
     app = QApplication(sys.argv)
     ex = TimeTracker()
     sys.exit(app.exec_())
