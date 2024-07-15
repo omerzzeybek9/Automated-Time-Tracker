@@ -32,14 +32,14 @@
 3. Reset Database: You can delete all log records and reset the database by clicking the Reset Database button.
 4. Logs and Graphics: You can see the logs of the tracked applications in the *Logs* tab and the usage times graphically in the *Graph* tab.
 
-## Dependencies
-
-- Python 3.x
-- PyQt5
-- Matplotlib
-- Psutil
-
 ## Contact
 
 Ömer Faruk Zeybek - [GitHub](https://github.com/omerzzeybek9)
+
+### Requirements
+
+```txt
+PyQt5
+matplotlib
+psutil
    
